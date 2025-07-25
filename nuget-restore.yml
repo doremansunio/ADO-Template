@@ -1,0 +1,12 @@
+# File: PlatformAutomation/templates/shared/nuget-restore.yml
+# Reusable template for .NET NuGet package restore.
+parameters:
+- name: solution
+  type: string
+
+steps:
+- task: DotNetCoreCLI@2
+  displayName: 'Restore NuGet Packages'
+  inputs:
+    command: 'restore'
+    projects: ${{ parameters.solution }}

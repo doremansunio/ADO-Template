@@ -1,0 +1,46 @@
+# File: PlatformAutomation/templates/shared/kpi-registration-deploy.yml
+# Reusable template for registering deployment related KPIs.
+parameters:
+- name: appName
+  type: string
+- name: envName
+  type: string
+- name: appServiceName # The actual name of the deployed Azure App Service
+  type: string
+
+steps:
+- task: PowerShell@2
+  displayName: 'Register Deployment to Monitoring System'
+  inputs:
+    targetType: 'inline'
+    script: |
+      $appName = "${{ parameters.appName }}"
+      $envName = "${{ parameters.envName }}"
+      $appServiceName = "${{ parameters.appServiceName }}"
+      $pipelineRunUrl = "$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)"
+      $buildNumber = "$(Build.BuildNumber)"
+      $deploymentStatus = "$(Agent.JobStatus)" # 'Succeeded', 'Failed', etc.
+
+      Write-Host "Registering '$appName' deployment to '$envName' ($appServiceName) with status: $deploymentStatus."
+
+      # --- Replace with your actual API call to your monitoring/compliance system ---
+      $deploymentBody = @{
+          ApplicationName = $appName
+          Environment = $envName
+          DeployedInstanceName = $appServiceName
+          BuildNumber = $buildNumber
+          PipelineRunUrl = $pipelineRunUrl
+          DeploymentStatus = $deploymentStatus
+          DeploymentTimestamp = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+          # Add DAST scan results summary or other post-deployment metrics if applicable
+          # DASTFindingsCount = "0" # Placeholder
+      } | ConvertTo-Json -Depth 10
+
+      Write-Host "Pushing deployment metrics: $($deploymentBody | ConvertTo-Json -Compress)"
+
+      # Invoke-RestMethod -Uri "https://your.monitoring.api/registerDeployment" `
+      #                   -Method Post `
+      #                   -ContentType "application/json" `
+      #                   -Body $deploymentBody
+
+      Write-Host "Deployment registration for '$appName' to $envName complete."

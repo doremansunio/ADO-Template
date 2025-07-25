@@ -1,0 +1,264 @@
+# File: PlatformAutomation/meta-pipeline.yml
+# This meta-pipeline orchestrates the onboarding of new applications.
+
+# --- Meta-Pipeline's OWN Trigger and PR definitions ---
+# This pipeline itself will trigger on changes to its own main branch
+trigger:
+  batch: true
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - meta-pipeline.yml
+      - templates/ # If changes to templates should also trigger a meta-pipeline build/test
+
+pr:
+  branches:
+    include:
+      - main
+      - features/*
+    paths:
+      include:
+        - meta-pipeline.yml
+        - templates/ # If changes to templates should also trigger a meta-pipeline build/test
+
+parameters:
+- name: appName
+  displayName: 'Application Name (e.g., MyWebApp)'
+  type: string
+  default: 'NewApp'
+
+- name: repoName
+  displayName: 'Application Repository Name (e.g., my-webapp-repo)'
+  type: string
+  default: 'new-app-repo'
+
+- name: repoUrl
+  displayName: 'Application Repository URL (e.g., https://dev.azure.com/YourOrg/YourProject/_git/my-webapp-repo)'
+  type: string
+  default: 'https://dev.azure.com/YourOrg/YourProject/_git/new-app-repo'
+
+- name: solutionPath
+  displayName: 'Relative path to .NET Solution File (e.g., src/MyWebApp/MyWebApp.sln)'
+  type: string
+  default: 'src/NewApp/NewApp.sln'
+
+- name: testProjectPath
+  displayName: 'Relative path to Test Project (e.g., src/MyWebApp.Tests/MyWebApp.Tests.csproj)'
+  type: string
+  default: 'src/NewApp.Tests/NewApp.Tests.csproj'
+
+- name: azureSubscriptionServiceConnection
+  displayName: 'Azure Service Connection Name'
+  type: string
+  default: 'YourAzureServiceConnection' # Replace with your actual service connection
+
+- name: devAppServiceName
+  displayName: 'Dev App Service Name (Azure WebApp)'
+  type: string
+  default: 'newapp-dev-appservice'
+
+- name: qaAppServiceName
+  displayName: 'QA App Service Name (Azure WebApp)'
+  type: string
+  default: 'newapp-qa-appservice'
+
+- name: prodAppServiceName
+  displayName: 'Prod App Service Name (Azure WebApp)'
+  type: string
+  default: 'newapp-prod-appservice'
+
+- name: agentPoolName
+  displayName: 'Agent Pool Name for Pipelines'
+  type: string
+  default: 'Azure Pipelines' # Or your self-hosted agent pool name
+
+variables:
+  platformRepoName: '$(Build.Repository.Name)' # The name of this central platform repo
+  platformRepoUrl: '$(Build.Repository.Uri)'   # The URL of this central platform repo
+  platformTemplatePath: 'templates/dotnet-ci-cd.yml' # Path to the main .NET template
+  appPipelineYamlPath: '.azuredevops/azure-pipelines.yml'
+  appParamsJsonPath: 'config/params.json'
+
+pool:
+  vmImage: 'ubuntu-latest' # Or a self-hosted agent suitable for Git operations and ADO CLI
+
+jobs:
+- job: OnboardApplication
+  displayName: 'Onboard Application: ${{ parameters.appName }}'
+  steps:
+  - checkout: self # Checkout the meta-pipeline repo itself to access templates
+
+  - task: PowerShell@2
+    displayName: 'Install Azure DevOps CLI Extension'
+    inputs:
+      targetType: 'inline'
+      script: |
+        az extension add --name azure-devops
+        Write-Host "Azure DevOps CLI extension installed."
+
+  - task: PowerShell@2
+    displayName: 'Prepare Application Repository'
+    inputs:
+      targetType: 'inline'
+      script: |
+        $appName = "${{ parameters.appName }}"
+        $repoName = "${{ parameters.repoName }}"
+        $repoUrl = "${{ parameters.repoUrl }}"
+        $solutionPath = "${{ parameters.solutionPath }}"
+        $testProjectPath = "${{ parameters.testProjectPath }}"
+        $azureSubscription = "${{ parameters.azureSubscriptionServiceConnection }}"
+        $devAppService = "${{ parameters.devAppServiceName }}"
+        $qaAppService = "${{ parameters.qaAppServiceName }}"
+        $prodAppService = "${{ parameters.prodAppServiceName }}"
+        $agentPool = "${{ parameters.agentPoolName }}"
+        $platformRepoName = "$(platformRepoName)"
+        $platformRepoUrl = "$(platformRepoUrl)"
+        $platformTemplatePath = "$(platformTemplatePath)"
+        $appPipelineYamlPath = "$(appPipelineYamlPath)"
+        $appParamsJsonPath = "$(appParamsJsonPath)"
+
+        Write-Host "--- Starting Onboarding for Application: $appName ---"
+        Write-Host "Application Repo URL: $repoUrl"
+
+        # 1. Clone the application repository
+        # Extract project name from URL: https://dev.azure.com/YourOrg/YourProject/_git/my-webapp-repo
+        $projectUrlParts = $repoUrl.Split('/')
+        $projectName = $projectUrlParts[$projectUrlParts.Count - 4] # Assumes typical ADO URL structure
+        Write-Host "Detected ADO Project Name: $projectName"
+
+        $cloneDir = "temp_app_repo"
+        git clone $repoUrl $cloneDir
+        Set-Location $cloneDir
+
+        # 2. Create/Update .azuredevops folder and azure-pipelines.yml stub
+        Write-Host "Creating/Updating .azuredevops folder and azure-pipelines.yml stub..."
+        $azureDevOpsDir = ".azuredevops"
+        if (!(Test-Path $azureDevOpsDir)) {
+            New-Item -ItemType Directory -Path $azureDevOpsDir
+        }
+
+        # Generate the azure-pipelines.yml stub that includes triggers/PRs and extends the platform template
+        $yamlContent = @"
+# This file is managed by the Platform Automation team.
+# Do not edit directly unless you understand the implications of template extension.
+
+# --- Application Pipeline's OWN Trigger and PR definitions (Managed by Platform) ---
+trigger:
+  batch: true
+  branches:
+    include:
+    - main
+    - features/*
+    - bugfixes/*
+  paths:
+    exclude: # Exclude params.json from triggering builds if it's just config
+    - config/params.json
+
+pr:
+  branches:
+    include:
+    - main
+    - features/*
+    - bugfixes/*
+
+resources:
+  repositories:
+    - repository: platform_templates # Alias for the central platform templates repo
+      type: git
+      name: $($platformRepoUrl.Replace("https://dev.azure.com/", "").Replace("/_git/$platformRepoName", ""))/$(platformRepoName) # Derive Org/RepoName
+      ref: main # Use 'main' or a specific release tag for template stability
+
+extends:
+  template: $($platformTemplatePath)@platform_templates # Path to the platform template within the central repo
+  parameters:
+    appName: '$appName'
+    solutionPath: '$solutionPath'
+    testProjectPath: '$testProjectPath'
+    azureSubscriptionServiceConnection: '$azureSubscription'
+    devAppServiceName: '$devAppService'
+    qaAppServiceName: '$qaAppService'
+    prodAppServiceName: '$prodAppService'
+    agentPoolName: '$agentPool'
+    # Add any other parameters your platform template expects
+"@
+        $yamlContent | Out-File -FilePath $appPipelineYamlPath -Encoding UTF8
+
+        # 3. Create/Update config/params.json
+        Write-Host "Creating/Updating config/params.json..."
+        $configDir = "config"
+        if (!(Test-Path $configDir)) {
+            New-Item -ItemType Directory -Path $configDir
+        }
+
+        $paramsJson = @{
+            appName = $appName
+            repoName = $repoName
+            solutionPath = $solutionPath
+            testProjectPath = $testProjectPath
+            azureSubscriptionServiceConnection = $azureSubscription
+            devAppServiceName = $devAppService
+            qaAppServiceName = $qaAppService
+            prodAppServiceName = $prodAppService
+            environment = "Development" # Default or configurable
+            # Add any other application-specific configurations here
+        } | ConvertTo-Json -Depth 10
+
+        $paramsJson | Out-File -FilePath $appParamsJsonPath -Encoding UTF8
+
+        # 4. Commit and Push changes to the application repository
+        git config user.email "azure-devops-platform@yourcompany.com"
+        git config user.name "Azure DevOps Platform Automation"
+        git add .
+        git commit -m "feat: Initial CI/CD pipeline setup by Platform Automation"
+        git push origin main # Or push to a new branch and create a PR
+
+        Write-Host "Files committed and pushed to application repository."
+        Set-Location .. # Go back to original directory
+
+        # 5. Create the Azure DevOps pipeline definition
+        Write-Host "Creating/Updating Azure DevOps pipeline definition..."
+        $pipelineName = "$appName-CI-CD"
+        $pipelineId = az pipelines show --name "$pipelineName" --project "$projectName" --query "id" -o tsv 2>$null
+
+        if (-not $pipelineId) {
+            Write-Host "Pipeline '$pipelineName' does not exist. Creating..."
+            az pipelines create `
+              --name "$pipelineName" `
+              --repository "$repoName" `
+              --branch "main" `
+              --yaml-path "$appPipelineYamlPath" `
+              --project "$projectName" `
+              --query "id" -o tsv
+        } else {
+            Write-Host "Pipeline '$pipelineName' already exists (ID: $pipelineId). Updating..."
+            az pipelines update `
+              --name "$pipelineName" `
+              --yaml-path "$appPipelineYamlPath" `
+              --project "$projectName"
+            # Note: For YAML path updates, --yaml-path is specified relative to the repository root.
+        }
+
+        Write-Host "Azure DevOps pipeline definition created/updated."
+
+        # 6. KPI Registration: % Apps Onboarded
+        Write-Host "Registering '% Apps Onboarded' KPI..."
+        $onboardingBody = @{
+            ApplicationName = $appName
+            OnboardingStatus = "Succeeded"
+            OnboardingTimestamp = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+            OnboardedByPipeline = "$(Build.DefinitionName)"
+            OnboardedByRunId = "$(Build.BuildId)"
+        } | ConvertTo-Json -Depth 10
+
+        Write-Host "Pushing onboarding metric: $($onboardingBody | ConvertTo-Json)"
+
+        # Invoke-RestMethod -Uri "https://your.monitoring.api/registerOnboarding" `
+        #                   -Method Post `
+        #                   -ContentType "application/json" `
+        #                   -Body $onboardingBody
+
+        Write-Host "--- Onboarding for Application: $appName Complete! ---"
+    env:
+      AZURE_DEVOPS_EXT_PAT: $(System.AccessToken) # Needs 'Allow scripts to access the OAuth token' on agent job

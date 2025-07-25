@@ -1,0 +1,204 @@
+# File: PlatformAutomation/templates/dotnet-ci-cd.yml
+# This is the standard, extensible CI/CD template for .NET applications.
+# NOTE: Trigger and PR definitions are now in the application's local azure-pipelines.yml stub.
+
+parameters:
+- name: appName
+  type: string
+  displayName: 'Application Name'
+- name: solutionPath
+  type: string
+  displayName: 'Path to .NET Solution File (e.g., src/MyWebApp/MyWebApp.sln)'
+- name: testProjectPath
+  type: string
+  displayName: 'Path to Test Project (e.g., src/MyWebApp.Tests/MyWebApp.Tests.csproj)'
+- name: azureSubscriptionServiceConnection
+  type: string
+  displayName: 'Azure Service Connection Name'
+- name: devAppServiceName
+  type: string
+  displayName: 'Dev Azure App Service Name'
+- name: qaAppServiceName
+  type: string
+  displayName: 'QA Azure App Service Name'
+- name: prodAppServiceName
+  type: string
+  displayName: 'Prod Azure App Service Name'
+- name: agentPoolName
+  type: string
+  displayName: 'Agent Pool Name'
+  default: 'Azure Pipelines' # Default to Microsoft-hosted agents
+
+# Define variables that apply globally to this pipeline
+variables:
+  buildConfiguration: 'Release'
+  buildPlatform: 'Any CPU'
+  solutionDirectory: ${{ split(parameters.solutionPath, '/')[0] }} # E.g., 'src' from 'src/MyWebApp/MyWebApp.sln'
+
+# Define a resource to reference other templates within this same repository
+resources:
+  repositories:
+    - repository: self # This refers to the current repository (PlatformAutomation)
+      type: git
+      name: $(Build.Repository.Name) # Use the current repo's name
+      ref: main # Ensure we use the 'main' branch of the templates repo for includes
+
+pool:
+  name: ${{ parameters.agentPoolName }}
+
+stages:
+- stage: Build
+  displayName: 'CI - Build & Test'
+  jobs:
+  - job: BuildAndTest
+    displayName: 'Build and Test .NET App'
+    steps:
+    - task: UseDotNet@2
+      displayName: 'Use .NET SDK 6.x'
+      inputs:
+        version: '6.x'
+
+    # Include a common NuGet restore template
+    - template: shared/nuget-restore.yml@self # Path relative to this template, using @self alias
+      parameters:
+        solution: ${{ parameters.solutionPath }}
+
+    # Include a common .NET build template
+    - template: shared/dotnet-build.yml@self # Path relative to this template, using @self alias
+      parameters:
+        solution: ${{ parameters.solutionPath }}
+        configuration: '$(buildConfiguration)'
+        platform: '$(buildPlatform)'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Run Unit Tests'
+      inputs:
+        command: 'test'
+        projects: ${{ parameters.testProjectPath }}
+        arguments: '--configuration $(buildConfiguration) --no-build --no-restore --logger trx --results-directory $(Build.ArtifactStagingDirectory)/TestResults'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Test Results'
+      inputs:
+        testResultsFormat: 'VSTest'
+        testResultsFiles: '$(Build.ArtifactStagingDirectory)/TestResults/**/*.trx'
+        mergeTestResults: true
+        failTaskOnFailedTests: true
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Publish Application Artifacts'
+      inputs:
+        command: 'publish'
+        publishWebProjects: true # For web applications
+        projects: ${{ parameters.solutionPath }} # Or specific project
+        arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/WebApp'
+        zipAfterPublish: true
+
+    - publish: $(Build.ArtifactStagingDirectory)
+      artifact: drop
+      displayName: 'Publish Build Artifacts'
+
+    # KPI Registration after build and test results are available
+    - template: shared/kpi-registration-build.yml@self
+      parameters:
+        appName: ${{ parameters.appName }}
+        repoName: '$(Build.Repository.Name)'
+        projectPath: '$(Build.SourcesDirectory)' # Pass path to access test reports etc.
+        # Ensure Test Coverage and Code Quality data is accessible here.
+        # This often requires parsing report files or querying external tools (e.g., SonarQube).
+
+- stage: DeployToDev
+  displayName: 'CD - Deploy to Development'
+  dependsOn: Build
+  condition: succeeded('Build')
+  jobs:
+  - deployment: DeployDevApp
+    displayName: 'Deploy App to Dev'
+    environment: 'Dev.WebApp' # Link to your Azure DevOps Environment for Dev
+    variables:
+      appServiceName: ${{ parameters.devAppServiceName }} # Use env specific app service name
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: drop
+
+          - task: AzureWebApp@1
+            displayName: 'Deploy to Azure App Service: $(appServiceName)'
+            inputs:
+              azureSubscription: ${{ parameters.azureSubscriptionServiceConnection }}
+              appType: 'webApp'
+              appName: '$(appServiceName)'
+              package: '$(Pipeline.Workspace)/drop/**/*.zip'
+
+          # KPI Registration for Deployment
+          - template: shared/kpi-registration-deploy.yml@self
+            parameters:
+              appName: ${{ parameters.appName }}
+              envName: 'Development'
+              appServiceName: '$(appServiceName)'
+
+- stage: DeployToQA
+  displayName: 'CD - Deploy to QA'
+  dependsOn: DeployToDev
+  condition: and(succeeded('DeployToDev'), not(eq(variables['Build.Reason'], 'PullRequest'))) # Don't deploy PRs to QA
+  jobs:
+  - deployment: DeployQAApp
+    displayName: 'Deploy App to QA'
+    environment: 'QA.WebApp' # Link to your Azure DevOps Environment for QA
+    variables:
+      appServiceName: ${{ parameters.qaAppServiceName }} # Use env specific app service name
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: drop
+
+          - task: AzureWebApp@1
+            displayName: 'Deploy to Azure App Service: $(appServiceName)'
+            inputs:
+              azureSubscription: ${{ parameters.azureSubscriptionServiceConnection }}
+              appType: 'webApp'
+              appName: '$(appServiceName)'
+              package: '$(Pipeline.Workspace)/drop/**/*.zip'
+
+          # KPI Registration for Deployment
+          - template: shared/kpi-registration-deploy.yml@self
+            parameters:
+              appName: ${{ parameters.appName }}
+              envName: 'QA'
+              appServiceName: '$(appServiceName)'
+
+- stage: DeployToProd
+  displayName: 'CD - Deploy to Production'
+  dependsOn: DeployToQA
+  condition: and(succeeded('DeployToQA'), eq(variables['Build.SourceBranch'], 'refs/heads/main')) # Only main branch to prod
+  jobs:
+  - deployment: DeployProdApp
+    displayName: 'Deploy App to Prod'
+    environment: 'Prod.WebApp' # Link to your Azure DevOps Environment for Prod
+    variables:
+      appServiceName: ${{ parameters.prodAppServiceName }} # Use env specific app service name
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: drop
+
+          - task: AzureWebApp@1
+            displayName: 'Deploy to Azure App Service: $(appServiceName)'
+            inputs:
+              azureSubscription: ${{ parameters.azureSubscriptionServiceConnection }}
+              appType: 'webApp'
+              appName: '$(appServiceName)'
+              package: '$(Pipeline.Workspace)/drop/**/*.zip'
+
+          # KPI Registration for Deployment
+          - template: shared/kpi-registration-deploy.yml@self
+            parameters:
+              appName: ${{ parameters.appName }}
+              envName: 'Production'
+              appServiceName: '$(appServiceName)'

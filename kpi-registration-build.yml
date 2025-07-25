@@ -1,0 +1,68 @@
+# File: PlatformAutomation/templates/shared/kpi-registration-build.yml
+# Reusable template for registering build/test related KPIs.
+parameters:
+- name: appName
+  type: string
+- name: repoName
+  type: string
+- name: projectPath # Path to source for finding test reports etc.
+  type: string
+
+steps:
+- task: PowerShell@2
+  displayName: 'Register Build & Test Metrics to Monitoring'
+  inputs:
+    targetType: 'inline'
+    script: |
+      $appName = "${{ parameters.appName }}"
+      $repoName = "${{ parameters.repoName }}"
+      $pipelineRunUrl = "$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)"
+      $buildNumber = "$(Build.BuildNumber)"
+      $buildStatus = "$(Agent.JobStatus)" # 'Succeeded', 'Failed', etc.
+
+      Write-Host "Registering build & test metrics for '$appName' (Build: $buildNumber)."
+
+      # --- Placeholder for extracting Test Coverage, Code Quality, SAST Findings ---
+      # This part needs to be customized based on your specific tools (e.g., SonarQube, security scanners).
+      # You might parse XML reports, query APIs, or use dedicated ADO tasks for reporting.
+      $testCoverage = "N/A"
+      try {
+          # Example: Parsing a Cobertura XML report for coverage
+          $coverageFile = Get-ChildItem -Path "${{ parameters.projectPath }}/**/*.cobertura.xml" | Select-Object -First 1
+          if ($coverageFile) {
+              [xml]$xml = Get-Content $coverageFile.FullName
+              $lineRate = $xml.coverage.'line-rate'
+              if ($lineRate) {
+                  $testCoverage = [double]$lineRate * 100 | Format-Number -Format "N2"
+              }
+          }
+          Write-Host "Extracted Test Coverage: $testCoverage%"
+      } catch {
+          Write-Warning "Failed to extract test coverage: $($_.Exception.Message)"
+      }
+
+      $codeQualityScore = "Good" # Placeholder: Integrate with SonarQube quality gate status
+      $sastFindingsCount = "0"   # Placeholder: Integrate with SAST tool results
+
+
+      # --- Replace with your actual API call to your monitoring/compliance system ---
+      $metricsBody = @{
+          ApplicationName = $appName
+          RepositoryName = $repoName
+          BuildNumber = $buildNumber
+          PipelineRunUrl = $pipelineRunUrl
+          BuildStatus = $buildStatus
+          TestCoverage = $testCoverage # e.g., "85.50"
+          CodeQualityScore = $codeQualityScore
+          SASTFindingsCount = $sastFindingsCount
+          MetricTimestamp = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+      } | ConvertTo-Json -Depth 10
+
+      Write-Host "Pushing build metrics: $($metricsBody | ConvertTo-Json -Compress)"
+
+      # Invoke-RestMethod -Uri "https://your.monitoring.api/registerBuildMetrics" `
+      #                   -Method Post `
+      #                   -ContentType "application/json" `
+      #                   -Body $metricsBody
+
+      Write-Host "Build & Test metrics registration complete for '$appName'."

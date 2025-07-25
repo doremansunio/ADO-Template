@@ -1,0 +1,12 @@
+{
+  "appName": "MyDotNetApp",
+  "repoName": "my-app-repo",
+  "solutionPath": "src/MyDotNetApp/MyDotNetApp.sln",
+  "testProjectPath": "src/MyDotNetApp.Tests/MyDotNetApp.Tests.csproj",
+  "azureSubscriptionServiceConnection": "YourAzureServiceConnection",
+  "devAppServiceName": "mydotnetapp-dev-appservice",
+  "qaAppServiceName": "mydotnetapp-qa-appservice",
+  "prodAppServiceName": "mydotnetapp-prod-appservice",
+  "environment": "Development",
+  "buildConfiguration": "Release"
+}

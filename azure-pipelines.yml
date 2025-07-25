@@ -1,0 +1,42 @@
+# File: my-app-repo/.azuredevops/azure-pipelines.yml
+# This file is managed by the Platform Automation team.
+# Do not edit directly unless you understand the implications of template extension.
+
+# --- Application Pipeline's OWN Trigger and PR definitions (Managed by Platform) ---
+trigger:
+  batch: true
+  branches:
+    include:
+    - main
+    - features/*
+    - bugfixes/*
+  paths:
+    exclude: # Exclude params.json from triggering builds if it's just config
+    - config/params.json
+
+pr:
+  branches:
+    include:
+    - main
+    - features/*
+    - bugfixes/*
+
+resources:
+  repositories:
+    - repository: platform_templates # Alias for the central platform templates repo
+      type: git
+      name: YourOrg/PlatformAutomation # Example: Derived from meta-pipeline params
+      ref: main # Use 'main' or a specific release tag for template stability
+
+extends:
+  template: templates/dotnet-ci-cd.yml@platform_templates # Path to the platform template within the central repo
+  parameters:
+    appName: 'MyDotNetApp' # Example: Passed from SNOW/Meta-pipeline
+    solutionPath: 'src/MyDotNetApp/MyDotNetApp.sln' # Example: Passed from SNOW/Meta-pipeline
+    testProjectPath: 'src/MyDotNetApp.Tests/MyDotNetApp.Tests.csproj' # Example: Passed from SNOW/Meta-pipeline
+    azureSubscriptionServiceConnection: 'YourAzureServiceConnection' # Example: Passed from SNOW/Meta-pipeline
+    devAppServiceName: 'mydotnetapp-dev-appservice' # Example: Passed from SNOW/Meta-pipeline
+    qaAppServiceName: 'mydotnetapp-qa-appservice' # Example: Passed from SNOW/Meta-pipeline
+    prodAppServiceName: 'mydotnetapp-prod-appservice' # Example: Passed from SNOW/Meta-pipeline
+    agentPoolName: 'Azure Pipelines' # Example: Passed from SNOW/Meta-pipeline
+    # Add any other parameters specific to this application's needs

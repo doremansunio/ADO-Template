@@ -1,0 +1,18 @@
+# File: PlatformAutomation/templates/shared/dotnet-build.yml
+# Reusable template for .NET build.
+parameters:
+- name: solution
+  type: string
+- name: configuration
+  type: string
+- name: platform
+  type: string
+
+steps:
+- task: DotNetCoreCLI@2
+  displayName: 'Build Solution'
+  inputs:
+    command: 'build'
+    projects: ${{ parameters.solution }}
+    arguments: '--configuration ${{ parameters.configuration }} --no-restore' # No restore as it's done by nuget-restore.yml
+    platform: ${{ parameters.platform }}
